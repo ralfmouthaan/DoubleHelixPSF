@@ -1,0 +1,246 @@
+% Ralf Mouthaan
+% University of Adelaide
+% December 2023
+%
+% Script to generate double helix point spread functions as per:
+% Pavani & Piestun, "High-Efficiency Rotating Point Spread Functions",
+% Optics Express, Vol. 16, No. 5, 2008
+
+clc; clear variables; close all;
+clear LaguerreGaussBeam;
+
+%% User-defined variables
+
+bolDebug = false;
+lambda = 532e-9; % Green light
+Nx = 1000;
+xnorm = linspace(-10,10,Nx); % normalised x used for generating LG beams
+                             % Needs to be this range to ensure
+                             % orthogonality of LG beams
+arrz = linspace(-3e-6, 3e-6, 11); 
+arrp = 0:20; % Should we go higher than this?
+arrl = 1:15; % If we include l=0 then we end up with a lot of power in l=0.
+
+%% Coordinate systems
+
+% Real space
+kz = 2*pi/lambda;
+x = linspace(-15e-6, 15e-6, Nx);
+r = sqrt(x.^2 + x.'.^2);
+dx = x(2) - x(1);
+
+% Inverse space
+kx = linspace(-1/dx/2, 1/dx/2, Nx); % Do I need a factor of 2pi in here?
+kr = sqrt(kx.^2 + kx.'.^2);
+
+% Initialise fields
+F = zeros(Nx, Nx);
+
+%% LG superposition and LG weights
+
+fprintf('Calculating initial LG superposition...\n')
+
+% LG weights decay away from the pl-line that describe the rotating spots
+d = ones([length(arrp) length(arrl)]);
+
+for n = 0:4
+
+    p = n*4 + 1;
+    l = n*2 + 1;
+
+    % Initial field
+    F = F + LaguerreGaussBeam(p, l, xnorm);
+
+    % LG weightings
+    for idxp = 1:length(arrp)
+        for idxl = 1:length(arrl)
+
+            p2 = arrp(idxp);
+            l2 = arrl(idxl);
+            d(idxp,idxl) = d(idxp,idxl) * ((p2-p)^2 + (l2-l)^2)^0.08; % I don't think the paper states the exponent here. 
+                                                                      % I just played around and guessed.
+        end
+    end
+                
+end
+
+w_gl = max(max(d)) - d;
+w_gl = w_gl / max(max(w_gl));
+
+if bolDebug
+    figure;
+    imagesc(arrl, arrp, w_gl);
+end
+
+%% Lobe + Holo masks
+
+fprintf('Calculating lobe masks...\n')
+ 
+for idxz = 1:length(arrz)
+    
+    % Angular spectrum method for propagation
+    Fz = PropagateZ(F, arrz(idxz), lambda, kr);
+    LobeMask{idxz} = FitLobeMask(Fz);
+
+    if bolDebug
+        subplot(1,2,1);
+        imagesc(abs(Fz).^2);
+        axis square;
+        title(['z = ' num2str(arrz(idxz)*1e6) 'um']);
+        subplot(1,2,2);
+        imagesc(LobeMask{idxz});
+        axis square;
+        drawnow;
+        pause(0.5);
+    end
+
+end
+
+HoloMask = zeros(Nx);
+HoloMask(r < 2.25e-6) = 1; % This is just a guess for the moment
+HoloMask = logical(HoloMask);                        
+
+%% Applying constraints
+
+figure('Position', [200 200 1200 700]);
+for ii = 1:10
+
+    % Calculate hologram
+    fprintf('Iter %d - Constraining hologram...\n', ii)
+    Holo = fftshift(ifft2(fftshift(F)));
+
+    % Calculate how much power in mask
+    Efficiency(ii) = sum(sum(abs(Holo(HoloMask)).^2)) / sum(sum(abs(Holo).^2));
+    subplot(1,5,4);
+    plot(Efficiency, 'r-', 'LineWidth', 2);
+    axis square;
+    xlabel('Iteration');
+    ylabel('Efficiency')
+    
+    % Constrain hologram
+    Holo = HoloMask.*exp(1i*angle(Holo));
+    F = fftshift(fft2(fftshift(Holo)));
+
+    % Plot results after hologram constraint
+    subplot(1,5,1); 
+    imagesc(abs(F)); 
+    axis square;
+    xticks(''); yticks('');
+    subplot(1,5,2); 
+    imagesc(angle(Holo)); 
+    axis square;
+    xticks(''); yticks('');
+    drawnow;
+
+    % Constrain LG weights
+    fprintf('Iter %d - Constraining LG weights...\n', ii)
+    Fnew = zeros(size(F));
+    for idxp = 1:length(arrp)
+        for idxl = 1:length(arrl)
+
+            p = arrp(idxp);
+            l = arrl(idxl);
+            LG = LaguerreGaussBeam(p, l, xnorm);
+            C(idxp, idxl) = abs(sum(sum(F.*conj(LG)))) ...
+                / sqrt(sum(sum(abs(F).^2))  / sum(sum(abs(LG).^2)));
+            Fnew = Fnew + C(idxp, idxl)*w_gl(idxp, idxl)*LG;
+
+        end
+    end
+    F = Fnew;
+
+    % Plot results after LG weights constraint
+    subplot(1,5,1); 
+    imagesc(abs(F)); 
+    axis square;
+    xticks(''); yticks('');
+    subplot(1,5,3); 
+    imagesc(abs(C)); 
+    axis square;
+    xticks(''); yticks('');
+    drawnow;
+
+    % Calculate hologram
+    fprintf('Iter %d - Constraining hologram...\n', ii)
+    Holo = fftshift(ifft2(fftshift(F)));
+
+    % Calculate how much power in mask
+    Efficiency(ii) = sum(sum(abs(Holo(HoloMask)).^2)) / sum(sum(abs(Holo).^2));
+    subplot(1,5,4);
+    plot(Efficiency, 'r-', 'LineWidth', 2);
+    axis square;
+    xlabel('Iteration');
+    ylabel('Efficiency')
+    
+    % Constrain hologram
+    Holo = HoloMask.*exp(1i*angle(Holo));
+    F = fftshift(fft2(fftshift(Holo)));
+
+    % Plot results after hologram constraint
+    subplot(1,5,1); 
+    imagesc(abs(F)); 
+    axis square;
+    subplot(1,5,2); 
+    imagesc(angle(Holo)); 
+    axis square;
+    xticks(''); yticks('');
+    drawnow;
+
+    % Constrain lobes
+    fprintf('Iter %d - Constraining lobes...\n', ii)
+    LobePower(ii) = 0;
+    Fnew = zeros(size(F));
+    for idxz = 1:length(arrz)
+        Fz = PropagateZ(F, arrz(idxz), lambda, kr);
+        Fz = Fz.*LobeMask{idxz};
+        LobePower = LobePower + sum(sum(abs(Fz).^2));
+        Fz = PropagateZ(Fz, -arrz(idxz), lambda, kr);
+        Fnew = Fnew + Fz/length(arrz);
+    end
+    F = Fnew;
+
+    % Plot results after constraining lobes
+    subplot(1,5,1); 
+    imagesc(abs(F)); 
+    axis square;
+    xticks(''); yticks('');
+    drawnow;
+
+    % Plot power in lobes
+    subplot(1,5,5);
+    plot(LobePower, 'r-', 'LineWidth', 2);
+    ylabel('Lobe Power')
+    xlabel('Iteration')
+    axis square;
+    
+end
+
+%% Results
+
+% One final hologram constraint
+Holo = fftshift(ifft2(fftshift(F)));
+Holo = HoloMask.*exp(1i*angle(Holo));
+F = fftshift(fft2(fftshift(Holo)));
+
+% Save hologram
+figure;
+imagesc(Holo);
+
+save("Double Helix Hologram.m", 'Holo');
+
+figure;
+for idxz = 1:length(arrz)
+    Fz = PropagateZ(F, arrz(idxz), lambda, kr);
+    imagesc(abs(Fz).^2);
+    axis square;
+    xticks('');
+    yticks('');
+    drawnow;
+    if idxz == 1
+        exportgraphics(gcf,'Rotating Double Helix.gif','Append',false);   
+    else
+        exportgraphics(gcf,'Rotating Double Helix.gif','Append',true);
+    end
+end
+
+

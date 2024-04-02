@@ -1,32 +1,27 @@
+% Ralf Mouthaan
+% University of Adelaide
+% March 2024
+%
+% Numerical propagation scripts to try to figure out what's going on with
+% Ramses' PSF engineering project. In effect, he's getting a line on the
+% camera that does not vary with depth instead of a twin airy PSF that does
+% vary with depth.
+
 clc; clear variables; close all;
+addpath('Functions\')
 
-Ly=0.0096; %x-side length (m)
-Lx=0.01536; %y-side length (m)
-Mx=1920; %number of samples in x
-My=1200; %number of samples in y
-dx=Lx/Mx; %sample interval in x (m)
-dy=Ly/My; %sample interval in x (m)
-lambda=0.532*10^(-6); %wavelength (m)
-k=2*pi/lambda; %wavenumber
+%% User-Defined
 
-x=-Lx/2:dx:Lx/2-dx; %x coordinates
-y=-Ly/2:dy:Ly/2-dy; %x coordinates
-[X,Y]=meshgrid(x,y); %X and Y grid coords
+Nx = 2048;
+x = linspace(-10e-6, 10e-6, Nx); % FOV of 10um
+BeadSize = 200e-9; % 200nm beads
+lambda = 800e-9;
+f_1 = 200e-3/40; % Focal length of 40x objective lens
 
-fx=-1/(2*dx):1/Lx:1/(2*dx)-1/Lx; %freq coords
-fy=-1/(2*dy):1/Ly:1/(2*dy)-1/Ly;
-[FX,FY]=meshgrid(fx,fy);
-alpha=20;
-Rpup=0.5*Ly;
-mask=alpha*(cos(pi.*Y/Rpup)+0.5*sin(pi.*X/Rpup));
+%% Sample plane
 
-mask = (mask-min(min(mask)));
-mask = mask/max(max(mask))*25;
-mask = mod(mask, 1);
+F = exp(-(x.^2 + x.'.^2)/(BeadSize/2).^2);
 
-figure(3)
-imagesc(fx,fy,abs(mask))
-colormap('gray'); %linear gray display map
-axis true;
+F = propFresnel2(F, x, lambda, f_1);
 
-imwrite(abs(mask),'TwinAiryMask.bmp','bmp')
+figure; imagesc(x*1e6, x*1e6, abs(F));

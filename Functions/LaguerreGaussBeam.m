@@ -29,7 +29,7 @@ function RetVal = LaguerreGaussPoly(k, a, x)
     persistent LGPoly
 
     if isempty(LGPoly)
-        LGPoly = cell(20+1,20+1);
+        LGPoly = cell(25+1,25+1);
     end
 
     if k == 0
